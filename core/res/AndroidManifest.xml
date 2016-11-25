@@ -861,6 +861,11 @@
     <!-- Added in 26Q2 -->
     <protected-broadcast android:name="android.telephony.action.STK_SETUP_EVENT_LIST" />
 
+    <!-- LineageOS additions -->
+
+    <!-- Used to launch a common app (FlipFlap) for devices with flip cover. -->
+    <protected-broadcast android:name="lineageos.intent.action.LID_STATE_CHANGED" />
+
     <!-- ====================================================================== -->
     <!--                          RUNTIME PERMISSIONS                           -->
     <!-- ====================================================================== -->
