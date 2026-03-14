@@ -164,18 +164,44 @@ class UdfpsHelper(
     }
 
     fun addDimLayer() {
+        if (view.isAttachedToWindow) {
+            brightnessToAlpha()
+            try {
+                windowManager.updateViewLayout(view, dimLayoutParams)
+            } catch (e: IllegalArgumentException) {
+                Log.e(TAG, "View not attached to WindowManager", e)
+            }
+            return
+        }
         brightnessToAlpha()
-        windowManager.addView(view, dimLayoutParams)
-        displayManager.registerDisplayListener(
-            displayListener,
-            null,
-            DisplayManager.EVENT_TYPE_DISPLAY_BRIGHTNESS,
-        )
+        try {
+            windowManager.addView(view, dimLayoutParams)
+            displayManager.registerDisplayListener(
+                displayListener,
+                null,
+                DisplayManager.EVENT_TYPE_DISPLAY_BRIGHTNESS,
+            )
+        } catch (e: IllegalStateException) {
+            Log.e(TAG, "Failed to add dim layer", e)
+        } catch (e: IllegalArgumentException) {
+            Log.e(TAG, "Failed to add dim layer", e)
+        }
     }
 
     fun removeDimLayer() {
-        windowManager.removeView(view)
-        displayManager.unregisterDisplayListener(displayListener)
+        if (!view.isAttachedToWindow) {
+            return
+        }
+        try {
+            windowManager.removeView(view)
+        } catch (e: IllegalArgumentException) {
+            Log.e(TAG, "Failed to remove dim layer", e)
+        }
+        try {
+            displayManager.unregisterDisplayListener(displayListener)
+        } catch (e: IllegalArgumentException) {
+            Log.e(TAG, "Failed to unregister display listener", e)
+        }
     }
 
     init {

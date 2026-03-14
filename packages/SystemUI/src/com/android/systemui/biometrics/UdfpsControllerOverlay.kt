@@ -131,6 +131,8 @@ constructor(
         null
     }
 
+    fun getUdfpsHelper(): UdfpsHelper? = udfpsHelper
+
     private val coreLayoutParams =
         WindowManager.LayoutParams(
                 WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_PANEL,
@@ -259,7 +261,6 @@ constructor(
     }
 
     private fun addViewNowOrLater(view: View, animation: UdfpsAnimationViewController<*>?) {
-        udfpsHelper?.addDimLayer()
         addViewRunnable =
             kotlinx.coroutines.Runnable {
                 Trace.setCounter("UdfpsAddView", 1)

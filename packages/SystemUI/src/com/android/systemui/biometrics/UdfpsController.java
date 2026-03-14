@@ -1265,6 +1265,12 @@ public class UdfpsController implements DozeReceiver, Dumpable {
             mDeviceEntryFaceAuthInteractor.onUdfpsSensorTouched();
         }
         mOnFingerDown = true;
+
+        // Only enable framework dimming while the user is actively pressing the sensor.
+        if (mOverlay != null && mOverlay.getUdfpsHelper() != null) {
+            mOverlay.getUdfpsHelper().addDimLayer();
+        }
+
         mFingerprintManager.onPointerDown(requestId, mSensorProps.sensorId, pointerId, x, y,
                 minor, major, orientation, time, gestureStart, isAod);
         Trace.endAsyncSection("UdfpsController.e2e.onPointerDown", 0);
@@ -1316,6 +1322,11 @@ public class UdfpsController implements DozeReceiver, Dumpable {
         mExecution.assertIsMainThread();
         mActivePointerId = MotionEvent.INVALID_POINTER_ID;
         mAcquiredReceived = false;
+
+        // Disable framework dimming as soon as the finger is lifted.
+        if (mOverlay != null && mOverlay.getUdfpsHelper() != null) {
+            mOverlay.getUdfpsHelper().removeDimLayer();
+        }
 
         if (mDisableSmartPixels) {
             if (mSmartPixelsFlag && (mSmartPixelsEnabled || mSmartPixelsOnPowerSave)) {
