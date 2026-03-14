@@ -1277,10 +1277,26 @@ public class UdfpsController implements DozeReceiver, Dumpable {
 
         final View view = mOverlay.getTouchOverlay();
         if (isOptical() && view instanceof UdfpsTouchOverlay udfpsView) {
-            if (mIgnoreRefreshRate) {
-                dispatchOnUiReady(requestId);
+            final boolean shouldDelayIlluminate = mOverlay.getUdfpsHelper() != null;
+            if (shouldDelayIlluminate) {
+                // Give WindowManager a moment to attach/draw the dim layer so it turns on in sync
+                // with optical illumination (HBM). Finger-up already disables both immediately.
+                mFgExecutor.executeDelayed(() -> {
+                    if (mOverlay == null || !mOverlay.matchesRequestId(requestId)) {
+                        return;
+                    }
+                    if (mIgnoreRefreshRate) {
+                        dispatchOnUiReady(requestId);
+                    } else {
+                        udfpsView.configureDisplay(() -> dispatchOnUiReady(requestId));
+                    }
+                }, 16);
             } else {
-                udfpsView.configureDisplay(() -> dispatchOnUiReady(requestId));
+                if (mIgnoreRefreshRate) {
+                    dispatchOnUiReady(requestId);
+                } else {
+                    udfpsView.configureDisplay(() -> dispatchOnUiReady(requestId));
+                }
             }
         }
 
