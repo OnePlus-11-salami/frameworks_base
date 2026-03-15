@@ -19,15 +19,20 @@ package com.android.systemui.biometrics
 import android.animation.ValueAnimator
 import android.annotation.UiThread
 import android.content.Context
+import android.graphics.drawable.ColorDrawable
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.hardware.biometrics.BiometricRequestConstants.REASON_AUTH_KEYGUARD
 import android.hardware.biometrics.BiometricRequestConstants.RequestReason
 import android.hardware.display.DisplayManager
+import android.provider.Settings
 import android.util.Log
 import android.view.Display
 import android.view.View
 import android.view.WindowManager
+import java.io.File
+import java.io.IOException
+import com.android.internal.graphics.ColorUtils
 import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
@@ -52,31 +57,31 @@ class UdfpsHelper(
     @RequestReason val requestReason: Int,
     private val brightnessMirrorShowingInteractor: BrightnessMirrorShowingInteractor,
     private var view: View = View(context).apply {
-        setBackgroundColor(Color.BLACK)
+        background = ColorDrawable(Color.BLACK)
         visibility = View.GONE
     }
 ) {
     private val displayManager = context.getSystemService(DisplayManager::class.java)!!
     private val isKeyguard = requestReason == REASON_AUTH_KEYGUARD
 
-    private val currentBrightness: Float get() =
-        displayManager.getBrightness(Display.DEFAULT_DISPLAY)
-    private val minBrightness: Float = context.resources
-        .getFloat(com.android.internal.R.dimen.config_screenBrightnessSettingMinimumFloat)
-    private val maxBrightness: Float = context.resources
-        .getFloat(com.android.internal.R.dimen.config_screenBrightnessSettingMaximumFloat)
     private val brightnessAlphaMap: Map<Int, Int> = context.resources
         .getStringArray(com.android.systemui.res.R.array.config_udfpsDimmingBrightnessAlphaArray)
         .associate {
             val (brightness, alpha) = it.split(",").map { value -> value.trim().toInt() }
             brightness to alpha
         }
-    val maxPanelBrightness: Int = brightnessAlphaMap.keys.max()
+    val maxPanelBrightness: Int = brightnessAlphaMap.keys.maxOrNull() ?: 0
+
+    private val backlightSysNode: String = context.resources.getString(
+        com.android.systemui.res.R.string.config_udfpsBacklightSysNode
+    )
+
+    private var lastBacklightReadErrorUptime: Long = 0L
 
     private val dimLayoutParams = WindowManager.LayoutParams(
         WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_PANEL,
         0 /* flags are set in computeLayoutParams() */,
-        PixelFormat.TRANSPARENT
+        PixelFormat.TRANSLUCENT
     ).apply {
         title = "Dim Layer for UDFPS"
         fitInsetsTypes = 0
@@ -92,15 +97,23 @@ class UdfpsHelper(
     }
 
     private val alphaAnimator = ValueAnimator().apply {
-        duration = 800L
+        duration = 0L
         addUpdateListener { animator ->
-            view.alpha = animator.animatedValue as Float
-            dimLayoutParams.alpha = animator.animatedValue as Float
+            applyAlphaToBackground(animator.animatedValue as Float)
             try {
                 windowManager.updateViewLayout(view, dimLayoutParams)
             } catch (e: IllegalArgumentException) {
                 Log.e(TAG, "View not attached to WindowManager", e)
             }
+        }
+    }
+
+    private fun applyAlphaToBackground(alpha: Float) {
+        val a = (alpha.coerceIn(0f, 1f) * 255f).toInt().coerceIn(0, 255)
+        val color = ColorUtils.setAlphaComponent(Color.BLACK, a)
+        when (val bg = view.background) {
+            is ColorDrawable -> bg.color = color
+            else -> view.setBackgroundColor(color)
         }
     }
 
@@ -127,21 +140,54 @@ class UdfpsHelper(
         return toMin + (value - fromMin) * (toMax - toMin) / (fromMax - fromMin)
     }
 
-    private fun interpolateAlpha(brightness: Int): Float {
-        val lowerEntry = brightnessAlphaMap.entries
-            .lastOrNull { it.key <= brightness } ?: return 0f
-        val upperEntry = brightnessAlphaMap.entries
-            .firstOrNull { it.key >= brightness } ?: return 0f
-        val (lowerBrightness, lowerAlpha) = lowerEntry
-        val (upperBrightness, upperAlpha) = upperEntry
+    private fun lookupOrInterpolateAlpha(brightness: Int): Float {
+        // Exact match
+        brightnessAlphaMap[brightness]?.let { return it / 255.0f }
 
-        return interpolate(
-            brightness.toFloat(),
-            lowerBrightness,
-            upperBrightness,
-            lowerAlpha,
-            upperAlpha
-        ).div(255.0f)
+        // Find surrounding entries for interpolation
+        val lowerEntry = brightnessAlphaMap.entries.lastOrNull { it.key <= brightness }
+        val upperEntry = brightnessAlphaMap.entries.firstOrNull { it.key >= brightness }
+
+        return when {
+            lowerEntry == null && upperEntry == null -> 0f
+            lowerEntry == null -> upperEntry!!.value / 255.0f
+            upperEntry == null -> lowerEntry.value / 255.0f
+            lowerEntry.key == upperEntry.key -> lowerEntry.value / 255.0f
+            else -> {
+                // Linear interpolation
+                val b1 = lowerEntry.key
+                val a1 = lowerEntry.value
+                val b2 = upperEntry.key
+                val a2 = upperEntry.value
+                interpolate(brightness.toFloat(), b1, b2, a1, a2) / 255.0f
+            }
+        }
+    }
+
+    private fun readBacklightFromSysNodeOrNull(): Int? {
+        if (backlightSysNode.isBlank()) return null
+        return try {
+            val text = File(backlightSysNode).readText().trim()
+            text.toIntOrNull()
+        } catch (_: SecurityException) {
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now - lastBacklightReadErrorUptime > 5_000) {
+                lastBacklightReadErrorUptime = now
+                Log.w(TAG, "Failed to read UDFPS backlight sysfs node (permission denied): $backlightSysNode")
+            }
+            null
+        } catch (_: IOException) {
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now - lastBacklightReadErrorUptime > 5_000) {
+                lastBacklightReadErrorUptime = now
+                Log.w(TAG, "Failed to read UDFPS backlight sysfs node (I/O error): $backlightSysNode")
+            }
+            null
+        }
+    }
+
+    private fun readBacklightOrNull(): Int? {
+        return readBacklightFromSysNodeOrNull()
     }
 
     // The current function does not account for Doze state where the brightness can go lower
@@ -149,18 +195,24 @@ class UdfpsHelper(
     // While it's possible to operate with floats, the dimming array was made by referencing
     // brightness_alpha_lut array from the kernel. This provides a comparable array.
     private fun brightnessToAlpha() {
-        val adjustedBrightness =
-            (currentBrightness.coerceIn(minBrightness, maxBrightness) * maxPanelBrightness).toInt()
+        if (brightnessAlphaMap.isEmpty() || maxPanelBrightness <= 0) {
+            applyAlphaToBackground(0f)
+            return
+        }
 
-        val targetAlpha = brightnessAlphaMap[adjustedBrightness]?.div(255.0f)
-            ?: interpolateAlpha(adjustedBrightness)
+        val rawBrightness = readBacklightOrNull() ?: run {
+            applyAlphaToBackground(0f)
+            return
+        }
+        val adjustedBrightness = rawBrightness.coerceIn(0, maxPanelBrightness)
+
+        val targetAlpha = lookupOrInterpolateAlpha(adjustedBrightness)
 
         Log.i(TAG, "Adjusted Brightness: $adjustedBrightness, Alpha: $targetAlpha")
 
-        alphaAnimator.setFloatValues(view.alpha, targetAlpha)
-        // Set the dim for both the view and the layout
-        view.alpha = targetAlpha
-        dimLayoutParams.alpha = targetAlpha
+        val currentAlpha = ((view.background as? ColorDrawable)?.alpha ?: 0) / 255.0f
+        alphaAnimator.setFloatValues(currentAlpha, targetAlpha)
+        applyAlphaToBackground(targetAlpha)
     }
 
     fun addDimLayer() {

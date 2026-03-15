@@ -30,6 +30,9 @@
     <!-- FPSInfoService FPS node file path -->
     <string name="config_fpsInfoSysNode" translatable="false">/sys/class/drm/sde-crtc-0/measured_fps</string>
 
+    <!-- UDFPS framework dimming: optional sysfs node path for current panel backlight level. -->
+    <string name="config_udfpsBacklightSysNode" translatable="false">/sys/devices/platform/soc/ae00000.qcom,mdss_mdp/backlight/panel0-backlight/brightness</string>
+
     <!-- Preferred max refresh rate at AOD & Ambient Display, if supported by the display. -->
     <integer name="config_aodMaxRefreshRate">-1</integer>
 
